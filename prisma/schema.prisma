@@ -107,3 +107,28 @@ model HubAdmin {
   passwordHash String
   createdAt    DateTime @default(now())
 }
+
+model PackagePlan {
+  id            String       @id @default(cuid())
+  code          String       @unique // "website_basic", "website_pro", "web_app_bundle", "custom"
+  name          String       // "Website Basic (₹499/mo)"
+  description   String?
+  monthlyPrice  Int          @default(49900) // In paise, e.g. 49900 = ₹499
+  annualPrice   Int?         // In paise, e.g. 499900 = ₹4,999
+  currency      String       @default("INR")
+  isPopular     Boolean      @default(false)
+  isActive      Boolean      @default(true)
+  features      Json         @default("{}") // { enableEpaper, enableMobileApi, enableLiveTv, enableYouTubeSync, ... }
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model AuditLog {
+  id            String       @id @default(cuid())
+  action        String       // "CLIENT_REGISTERED", "FREEZE_CMS", "UNFREEZE_CMS", "PLAN_UPDATED", "SSO_LAUNCHED", "PAYMENT_RECEIVED"
+  tenantId      String?
+  tenantName    String?
+  details       String?      @db.Text
+  ipAddress     String?
+  createdAt     DateTime     @default(now())
+}

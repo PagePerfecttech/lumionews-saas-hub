@@ -1,7 +1,12 @@
 import crypto from "crypto";
 
 export function generateLicenseKey(): string {
-  return `ln_live_${crypto.randomBytes(16).toString("hex")}`;
+  const hex = crypto.randomBytes(8).toString("hex").toUpperCase();
+  const p1 = hex.slice(0, 4);
+  const p2 = hex.slice(4, 8);
+  const p3 = hex.slice(8, 12);
+  const p4 = hex.slice(12, 16);
+  return `LN-LIVE-${p1}-${p2}-${p3}-${p4}`;
 }
 
 export function generateClientSecret(): string {
