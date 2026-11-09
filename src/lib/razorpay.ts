@@ -22,6 +22,33 @@ export function getRazorpayClient(): Razorpay | null {
 }
 
 /**
+ * Validates the authenticity of a Razorpay checkout payment signature using RAZORPAY_KEY_SECRET.
+ * expectedSignature = HMAC_SHA256(order_id + "|" + payment_id, secret)
+ */
+export function verifyRazorpayPaymentSignature(params: {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+}): boolean {
+  const secret = process.env.RAZORPAY_KEY_SECRET?.trim();
+  if (!secret || !params.signature || !params.orderId || !params.paymentId) return false;
+
+  const expectedSignature = crypto
+    .createHmac("sha256", secret)
+    .update(`${params.orderId}|${params.paymentId}`)
+    .digest("hex");
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(params.signature),
+      Buffer.from(expectedSignature)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Validates the authenticity of a Razorpay webhook payload using the shared webhook secret.
  */
 export function verifyRazorpayWebhookSignature(rawBody: string, signature: string | null): boolean {
@@ -91,4 +118,3 @@ export async function createSubscriptionPaymentLink(params: {
     return { paymentUrl: null, error: err?.message || "Razorpay API error" };
   }
 }
-

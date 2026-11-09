@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { verifyRazorpayPaymentSignature } from "@/lib/razorpay";
 import { dispatchRemoteSync } from "@/lib/remote-fleet";
 
 export const dynamic = "force-dynamic";
@@ -8,10 +9,38 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const licenseKey = body.licenseKey?.trim();
+    const razorpayOrderId = body.razorpay_order_id?.trim();
+    const razorpayPaymentId = body.razorpay_payment_id?.trim();
+    const razorpaySignature = body.razorpay_signature?.trim();
 
     if (!licenseKey) {
       return NextResponse.json(
-        { success: false, error: "License key is required" },
+        { success: false, error: "License key is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Razorpay payment verification parameters (order_id, payment_id, signature) are required. Direct unpaid renewals are not permitted.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Cryptographically verify payment signature using RAZORPAY_KEY_SECRET
+    const isAuthentic = verifyRazorpayPaymentSignature({
+      orderId: razorpayOrderId,
+      paymentId: razorpayPaymentId,
+      signature: razorpaySignature,
+    });
+
+    if (!isAuthentic) {
+      console.error(`[Billing Renew] Invalid Razorpay signature: order=${razorpayOrderId}, payment=${razorpayPaymentId}`);
+      return NextResponse.json(
+        { success: false, error: "Razorpay payment verification failed: Invalid cryptographic signature" },
         { status: 400 }
       );
     }
@@ -22,9 +51,24 @@ export async function POST(req: NextRequest) {
 
     if (!tenant) {
       return NextResponse.json(
-        { success: false, error: "Tenant not found" },
+        { success: false, error: "Tenant not found for the provided license key." },
         { status: 404 }
       );
+    }
+
+    // Check if this payment was already credited (idempotent / replay prevention)
+    const existingInvoice = await prisma.invoice.findFirst({
+      where: { razorpayPaymentId },
+    });
+
+    if (existingInvoice && existingInvoice.status === "PAID") {
+      return NextResponse.json({
+        success: true,
+        message: "Payment was already verified and credited.",
+        status: tenant.status,
+        validUntil: tenant.validUntil ? tenant.validUntil.toISOString() : null,
+        paymentId: razorpayPaymentId,
+      });
     }
 
     const now = new Date();
@@ -43,7 +87,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Create an Invoice receipt
+    // Create an Invoice receipt tied to this real Razorpay payment
     const amount = Number(body.amount) || tenant.amount || 49900;
     await prisma.invoice.create({
       data: {
@@ -51,6 +95,7 @@ export async function POST(req: NextRequest) {
         amount,
         currency: tenant.currency || "INR",
         status: "PAID",
+        razorpayPaymentId,
         billingPeriod: now.toLocaleString("default", { month: "long", year: "numeric" }),
         paidAt: now,
       },
@@ -75,9 +120,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "Subscription successfully renewed for 30 days.",
+      message: "Razorpay payment verified successfully. Subscription renewed for 30 days.",
       status: "ACTIVE",
       validUntil: newValidUntil.toISOString(),
+      paymentId: razorpayPaymentId,
     });
   } catch (err: any) {
     console.error("[Billing Renew API Error]:", err);
@@ -87,4 +133,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-

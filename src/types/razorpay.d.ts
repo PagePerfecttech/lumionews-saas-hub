@@ -1,6 +1,18 @@
 declare module "razorpay" {
   export default class Razorpay {
     constructor(options: { key_id: string; key_secret: string });
+    orders: {
+      create(options: {
+        amount: number;
+        currency: string;
+        receipt?: string;
+        notes?: Record<string, any>;
+        partial_payment?: boolean;
+        [key: string]: any;
+      }): Promise<any>;
+      fetch(orderId: string): Promise<any>;
+      fetchPayments(orderId: string): Promise<any>;
+    };
     paymentLink: {
       create(options: any): Promise<any>;
       fetch(paymentLinkId: string): Promise<any>;
@@ -17,4 +29,3 @@ declare module "razorpay" {
     };
   }
 }
-
