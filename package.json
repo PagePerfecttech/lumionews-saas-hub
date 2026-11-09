@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --port 3005",
     "build": "prisma generate --schema=prisma/schema.prisma && next build",
+    "postinstall": "prisma generate --schema=prisma/schema.prisma",
     "start": "next start --port 3005",
     "lint": "next lint",
     "db:generate": "prisma generate --schema=prisma/schema.prisma",

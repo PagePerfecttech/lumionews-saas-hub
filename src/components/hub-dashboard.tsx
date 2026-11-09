@@ -32,7 +32,13 @@ export interface TenantItem {
   _count?: { invoices: number };
 }
 
-export function HubDashboard({ initialTenants }: { initialTenants: TenantItem[] }) {
+export function HubDashboard({
+  initialTenants,
+  authWarning = false,
+}: {
+  initialTenants: TenantItem[];
+  authWarning?: boolean;
+}) {
   const [tenants, setTenants] = useState<TenantItem[]>(initialTenants);
   const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "GRACE_PERIOD" | "SUSPENDED">("ALL");
   const [modalOpen, setModalOpen] = useState(false);
@@ -229,6 +235,15 @@ export function HubDashboard({ initialTenants }: { initialTenants: TenantItem[] 
     URL.revokeObjectURL(url);
   };
 
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      window.location.reload();
+    } catch {
+      window.location.reload();
+    }
+  };
+
   const calculateDaysRemaining = (validUntil: string) => {
     const diff = new Date(validUntil).getTime() - Date.now();
     const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
@@ -239,6 +254,28 @@ export function HubDashboard({ initialTenants }: { initialTenants: TenantItem[] 
 
   return (
     <div style={{ minHeight: "100vh", background: "#090d16", padding: "32px 40px", maxWidth: 1440, margin: "0 auto" }}>
+      {/* Security Warning Banner if HUB_ADMIN_PASSWORD is not set */}
+      {authWarning && (
+        <div style={{
+          background: "rgba(245, 158, 11, 0.12)",
+          border: "1px solid rgba(245, 158, 11, 0.4)",
+          borderRadius: 10,
+          padding: "12px 18px",
+          marginBottom: 24,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          color: "#fde68a",
+          fontSize: 13,
+        }}>
+          <span style={{ fontSize: 18 }}>⚠️</span>
+          <div>
+            <strong>Security Notice:</strong> <code>HUB_ADMIN_PASSWORD</code> is not configured in your environment variables.
+            The Super Admin control plane is currently accessible to anyone with this URL. Add <code>HUB_ADMIN_PASSWORD="your-secure-password"</code> to your Vercel Project Settings to secure access.
+          </div>
+        </div>
+      )}
+
       {/* Top Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, flexWrap: "wrap", gap: 16 }}>
         <div>
@@ -258,18 +295,30 @@ export function HubDashboard({ initialTenants }: { initialTenants: TenantItem[] 
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            setWizardTab("PROFILE");
-            setModalOpen(true);
-          }}
-          style={{ display: "flex", alignItems: "center", gap: 8, background: "#4f46e5", color: "#fff", border: "none", padding: "12px 20px", borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: "pointer", boxShadow: "0 4px 14px rgba(79, 70, 229, 0.35)", transition: "all 0.15s" }}
-        >
-          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-          </svg>
-          Register Client & Generate .env
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            onClick={() => {
+              setWizardTab("PROFILE");
+              setModalOpen(true);
+            }}
+            style={{ display: "flex", alignItems: "center", gap: 8, background: "#4f46e5", color: "#fff", border: "none", padding: "12px 20px", borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: "pointer", boxShadow: "0 4px 14px rgba(79, 70, 229, 0.35)", transition: "all 0.15s" }}
+          >
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+            </svg>
+            Register Client & Generate .env
+          </button>
+
+          {!authWarning && (
+            <button
+              onClick={handleLogout}
+              title="Log out from Super Admin"
+              style={{ background: "#1f2937", color: "#9ca3af", border: "1px solid #374151", padding: "12px 16px", borderRadius: 10, fontWeight: 600, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }}
+            >
+              Sign Out
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Metrics Row */}

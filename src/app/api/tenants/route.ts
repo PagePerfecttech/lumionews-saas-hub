@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { generateLicenseKey, generateClientSecret } from "@/lib/crypto";
 import { createSubscriptionPaymentLink } from "@/lib/razorpay";
 import { generateClientEnv } from "@/lib/env-generator";
+import { verifyApiAuth } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,11 @@ export const dynamic = "force-dynamic";
  * GET /api/tenants
  * Lists all registered client newspaper tenants with metrics.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!verifyApiAuth(req)) {
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const tenants = await prisma.tenant.findMany({
       orderBy: { createdAt: "desc" },
@@ -33,6 +38,10 @@ export async function GET() {
  * provisions initial Razorpay billing link, and generates .env config for client's Vercel deployment.
  */
 export async function POST(req: NextRequest) {
+  if (!verifyApiAuth(req)) {
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json();
 
