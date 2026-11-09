@@ -1,0 +1,108 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+model Tenant {
+  id              String         @id @default(cuid())
+  name            String         // "Andhra Chronicle"
+  slug            String         @unique // "andhra-chronicle"
+  domain          String         @unique // "acps.smsinfotek.in"
+  siteUrl         String         // "https://acps.smsinfotek.in"
+  licenseKey      String         @unique // "ln_live_..."
+  clientSecret    String         // Asymmetric HMAC-SHA256 secret
+
+  // Contact & Billing
+  ownerName       String
+  ownerEmail      String
+  ownerPhone      String         // e.g. "+919876543210"
+
+  // Status & Lock Scope
+  status          TenantStatus   @default(ACTIVE)
+  lockScope       LockScope      @default(ADMIN_ONLY)
+  suspensionReason String?
+
+  // Plan Details
+  planId          String         @default("website_standard")
+  planName        String         @default("Website Basic (₹499/mo)")
+  amount          Int            @default(49900) // In paise: 49900 = ₹499
+  currency        String         @default("INR")
+  billingCycle    String         @default("monthly")
+
+  // Expiration & Grace Period
+  validUntil      DateTime
+  gracePeriodEnd  DateTime?
+
+  // Plan Feature Flags (enabled modules)
+  features        Json           @default("{\"enableEpaper\":false,\"enableMobileApi\":false,\"enableYouTubeSync\":true,\"enableLiveTv\":true,\"enableMandiRates\":true,\"enablePreciousMetals\":true,\"enablePolls\":true}")
+
+  // Razorpay Recurring Integration
+  razorpayPlanId        String?
+  razorpaySubId         String?        @unique
+  razorpayCustomerId    String?
+  razorpayPaymentLink   String?
+
+  // Generated Deployment Environment Template for Vercel
+  envTemplate           String?        @db.Text
+  envConfig             Json?
+
+  // Invoices & Billing History
+  invoices        Invoice[]
+
+  // Telemetry (received from heartbeat)
+  lastHeartbeatAt DateTime?
+  articleCount    Int            @default(0)
+  userCount       Int            @default(0)
+  installedVersion String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  GRACE_PERIOD
+  PAST_DUE
+  SUSPENDED
+  TERMINATED
+}
+
+enum LockScope {
+  ADMIN_ONLY
+  FULL_SITE
+}
+
+model Invoice {
+  id                    String        @id @default(cuid())
+  tenantId              String
+  tenant                Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  amount                Int           // ₹499 = 49900
+  currency              String        @default("INR")
+  status                InvoiceStatus @default(PENDING)
+  razorpayPaymentId     String?
+  razorpayInvoiceId     String?
+  billingPeriod         String        // "November 2026"
+  paidAt                DateTime?
+  createdAt             DateTime      @default(now())
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model HubAdmin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
