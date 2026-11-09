@@ -6,7 +6,24 @@ import { dispatchRemoteSync } from "@/lib/remote-fleet";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/webhooks/razorpay
+ * GET /api/webhooks/razorpay & /api/webhook/razorpay
+ * Health-check endpoint for browser tests and uptime monitoring.
+ */
+export async function GET() {
+  return NextResponse.json({
+    status: "ok",
+    service: "Razorpay Webhook Listener",
+    endpoints: [
+      "/api/webhook/razorpay",
+      "/api/webhooks/razorpay",
+    ],
+    configured: Boolean(process.env.RAZORPAY_WEBHOOK_SECRET),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * POST /api/webhooks/razorpay & /api/webhook/razorpay
  * Listens to Razorpay payment events, automatically updates tenant subscriptions,
  * creates invoice logs, and dispatches real-time remote unlock or freeze webhooks to client sites.
  */
