@@ -80,8 +80,11 @@ export function generateClientEnv(inputs: ClientEnvInputs): GeneratedEnvResult {
   const r2Bucket = inputs.r2BucketName || `${cleanDomain.replace(/[^a-z0-9]/g, "-")}-media`;
   const r2Public = inputs.r2PublicUrl || `https://media.${cleanDomain}`;
 
-  const defaultHubUrl = process.env.NEXT_PUBLIC_APP_URL || "https://app.smsinfotek.in";
-  const hubUrl = (inputs.hubUrl && !inputs.hubUrl.includes("localhost") ? inputs.hubUrl : defaultHubUrl).replace(/\/+$/, "");
+  const defaultHubUrl = "https://app.smsinfotek.in";
+  let hubUrl = (inputs.hubUrl && !inputs.hubUrl.includes("localhost") ? inputs.hubUrl : (process.env.NEXT_PUBLIC_APP_URL || defaultHubUrl)).replace(/\/+$/, "");
+  if (hubUrl.includes("saasnews.vercel.app")) {
+    hubUrl = hubUrl.replace("saasnews.vercel.app", "app.smsinfotek.in");
+  }
 
   const envContent = [
     `# ==============================================================================`,

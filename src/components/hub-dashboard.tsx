@@ -110,6 +110,39 @@ export function HubDashboard({
   } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // Webhook Health Test State
+  const [testingWebhook, setTestingWebhook] = useState(false);
+  const [webhookTestResult, setWebhookTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const effectiveHubUrl = (hubUrl && !hubUrl.includes("saasnews.vercel.app") ? hubUrl : "https://app.smsinfotek.in").replace(/\/+$/, "");
+
+  const handleTestWebhook = async () => {
+    setTestingWebhook(true);
+    setWebhookTestResult(null);
+    try {
+      const res = await fetch("/api/webhooks/razorpay");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.status === "ok") {
+        setWebhookTestResult({
+          success: true,
+          message: `Webhook listener is LIVE at ${effectiveHubUrl}/api/webhooks/razorpay (Secret configured: ${data.configured ? "Yes" : "Waiting for RAZORPAY_WEBHOOK_SECRET"})`,
+        });
+      } else {
+        setWebhookTestResult({
+          success: false,
+          message: data.error || `HTTP ${res.status}`,
+        });
+      }
+    } catch (e: any) {
+      setWebhookTestResult({
+        success: false,
+        message: e?.message || "Failed to reach endpoint",
+      });
+    } finally {
+      setTestingWebhook(false);
+    }
+  };
+
   // New Client Form State
   const initialFormState = {
     name: "",
@@ -1296,20 +1329,40 @@ export function HubDashboard({
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>
                   Webhook Endpoint URL
                 </label>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <input
                     type="text"
                     readOnly
-                    value={`${hubUrl.replace(/\/+$/, "")}/api/webhooks/razorpay`}
+                    value={`${effectiveHubUrl}/api/webhooks/razorpay`}
                     style={{ flex: 1, background: "#080c14", border: "1px solid #1e293b", borderRadius: 8, padding: "8px 12px", color: "#f8fafc", fontFamily: "monospace", fontSize: 12 }}
                   />
                   <button
-                    onClick={() => copyToClipboard(`${hubUrl.replace(/\/+$/, "")}/api/webhooks/razorpay`, "rp-wh")}
+                    onClick={() => copyToClipboard(`${effectiveHubUrl}/api/webhooks/razorpay`, "rp-wh")}
                     style={{ background: "#1e293b", color: "#f8fafc", border: "1px solid #334155", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
                   >
                     {copiedKey === "rp-wh" ? "Copied!" : "Copy"}
                   </button>
+                  <button
+                    onClick={handleTestWebhook}
+                    disabled={testingWebhook}
+                    style={{ background: "#0284c7", color: "#ffffff", border: "none", borderRadius: 8, padding: "8px 14px", cursor: testingWebhook ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+                  >
+                    {testingWebhook ? "Testing..." : "Test Endpoint"}
+                  </button>
                 </div>
+                {webhookTestResult && (
+                  <div style={{
+                    fontSize: 12,
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    background: webhookTestResult.success ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                    color: webhookTestResult.success ? "#34d399" : "#f87171",
+                    border: `1px solid ${webhookTestResult.success ? "#10b981" : "#ef4444"}`,
+                    marginBottom: 10,
+                  }}>
+                    {webhookTestResult.message}
+                  </div>
+                )}
               </div>
 
               <div style={{ fontSize: 12, color: "#cbd5e1" }}>

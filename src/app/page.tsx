@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { prisma } from "@/lib/db";
 import { HubDashboard } from "@/components/hub-dashboard";
 import { HubLoginView } from "@/components/hub-login";
@@ -12,6 +13,14 @@ export default async function HubHomePage() {
 
   if (!authed) {
     return <HubLoginView />;
+  }
+
+  const headerList = await headers();
+  const host = headerList.get("x-forwarded-host") || headerList.get("host") || "";
+  const proto = headerList.get("x-forwarded-proto") || "https";
+  let resolvedHubUrl = host ? `${proto}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || "https://app.smsinfotek.in");
+  if (resolvedHubUrl.includes("saasnews.vercel.app")) {
+    resolvedHubUrl = resolvedHubUrl.replace("saasnews.vercel.app", "app.smsinfotek.in");
   }
 
   let initialTenants: any[] = [];
@@ -72,7 +81,7 @@ export default async function HubHomePage() {
       initialInvoices={JSON.parse(JSON.stringify(initialInvoices))}
       initialMrrPaise={activeMrrPaise}
       authWarning={!authRequired}
-      hubUrl={process.env.NEXT_PUBLIC_APP_URL || "https://app.smsinfotek.in"}
+      hubUrl={resolvedHubUrl}
     />
   );
 }
