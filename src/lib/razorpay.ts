@@ -1,24 +1,34 @@
 import crypto from "crypto";
 import Razorpay from "razorpay";
 
-let razorpayInstance: Razorpay | null = null;
+/**
+ * Sanitizes Razorpay credentials by removing surrounding quotes,
+ * escaped quotes, carriage returns, newlines, and whitespace.
+ * Fixes common Vercel copy-paste mistakes where quotes are preserved.
+ */
+export function cleanRazorpayCredential(val?: string | null): string {
+  if (!val) return "";
+  let clean = String(val).trim();
+  // Strip outer quotes like "key" or 'key' or \"key\"
+  clean = clean.replace(/^(["'`]|\\")+|(["'`]|\\")+$/g, "").trim();
+  // Strip control characters, carriage returns, newlines
+  clean = clean.replace(/[\r\n\t\x00-\x1f\x7f-\x9f]/g, "");
+  return clean;
+}
 
-export function getRazorpayClient(): Razorpay | null {
-  const key_id = process.env.RAZORPAY_KEY_ID?.trim();
-  const key_secret = process.env.RAZORPAY_KEY_SECRET?.trim();
+export function getRazorpayClient(customKeyId?: string, customKeySecret?: string): Razorpay | null {
+  const key_id = cleanRazorpayCredential(customKeyId || process.env.RAZORPAY_KEY_ID);
+  const key_secret = cleanRazorpayCredential(customKeySecret || process.env.RAZORPAY_KEY_SECRET);
 
-  if (!key_id || !key_secret) {
+  if (!key_id || !key_secret || key_id.includes("your_") || key_secret.includes("your_")) {
     return null;
   }
 
-  if (!razorpayInstance) {
-    razorpayInstance = new Razorpay({
-      key_id,
-      key_secret,
-    });
-  }
-
-  return razorpayInstance;
+  // Create a fresh client instance to avoid stale cached credentials in warm serverless lambdas
+  return new Razorpay({
+    key_id,
+    key_secret,
+  });
 }
 
 /**
@@ -30,7 +40,7 @@ export function verifyRazorpayPaymentSignature(params: {
   paymentId: string;
   signature: string;
 }): boolean {
-  const secret = process.env.RAZORPAY_KEY_SECRET?.trim();
+  const secret = cleanRazorpayCredential(process.env.RAZORPAY_KEY_SECRET);
   if (!secret || !params.signature || !params.orderId || !params.paymentId) return false;
 
   const expectedSignature = crypto
@@ -52,7 +62,7 @@ export function verifyRazorpayPaymentSignature(params: {
  * Validates the authenticity of a Razorpay webhook payload using the shared webhook secret.
  */
 export function verifyRazorpayWebhookSignature(rawBody: string, signature: string | null): boolean {
-  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET?.trim();
+  const webhookSecret = cleanRazorpayCredential(process.env.RAZORPAY_WEBHOOK_SECRET);
   if (!webhookSecret || !signature) return false;
 
   const expectedSignature = crypto
@@ -114,7 +124,8 @@ export async function createSubscriptionPaymentLink(params: {
 
     return { paymentUrl: paymentLink.short_url || null };
   } catch (err: any) {
-    console.error("[Razorpay Link Creation Error]:", err?.message);
-    return { paymentUrl: null, error: err?.message || "Razorpay API error" };
+    const desc = err?.error?.description || err?.message || "Razorpay API error";
+    console.error("[Razorpay Link Creation Error]:", desc);
+    return { paymentUrl: null, error: desc };
   }
 }

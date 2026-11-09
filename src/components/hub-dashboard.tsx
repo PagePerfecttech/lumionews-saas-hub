@@ -114,7 +114,47 @@ export function HubDashboard({
   const [testingWebhook, setTestingWebhook] = useState(false);
   const [webhookTestResult, setWebhookTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Razorpay API Credentials Diagnostic State
+  const [testingApiKeys, setTestingApiKeys] = useState(false);
+  const [apiKeysTestResult, setApiKeysTestResult] = useState<{
+    success: boolean;
+    message: string;
+    recommendation?: string;
+    details?: any;
+  } | null>(null);
+
   const effectiveHubUrl = (hubUrl && !hubUrl.includes("saasnews.vercel.app") ? hubUrl : "https://app.smsinfotek.in").replace(/\/+$/, "");
+
+  const handleTestApiKeys = async () => {
+    setTestingApiKeys(true);
+    setApiKeysTestResult(null);
+    try {
+      const res = await fetch("/api/billing/diagnostic");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.authenticated) {
+        setApiKeysTestResult({
+          success: true,
+          message: `Active & Authenticated! Mode: ${data.keyId?.mode || "LIVE"} (${data.keyId?.prefix || ""}...), Key Length: ${data.keyId?.length || 0}`,
+          recommendation: data.recommendation,
+          details: data,
+        });
+      } else {
+        setApiKeysTestResult({
+          success: false,
+          message: data.razorpayApiCheck?.errorSummary || "Authentication failed with Razorpay API",
+          recommendation: data.recommendation || "Check your RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Vercel.",
+          details: data,
+        });
+      }
+    } catch (e: any) {
+      setApiKeysTestResult({
+        success: false,
+        message: e?.message || "Failed to contact diagnostic endpoint",
+      });
+    } finally {
+      setTestingApiKeys(false);
+    }
+  };
 
   const handleTestWebhook = async () => {
     setTestingWebhook(true);
@@ -317,6 +357,7 @@ export function HubDashboard({
       planName: tenant.planName,
       amount: tenant.amount,
       validUntil: tenant.validUntil ? new Date(tenant.validUntil).toISOString().split("T")[0] : "",
+      razorpayPaymentLink: tenant.razorpayPaymentLink || "",
       features: tenant.features || {},
     });
   };
@@ -1325,6 +1366,58 @@ export function HubDashboard({
                 In your Razorpay Dashboard (<strong>Settings &rarr; Webhooks</strong>), click <strong>Add New Webhook</strong> and configure:
               </p>
 
+              {/* API Keys Live Authenticator */}
+              <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: 10, padding: "16px", marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 10 }}>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#f8fafc" }}>
+                      Razorpay API Credentials (RAZORPAY_KEY_ID &amp; RAZORPAY_KEY_SECRET)
+                    </h4>
+                    <p style={{ margin: "2px 0 0", fontSize: 11, color: "#94a3b8" }}>
+                      Validates whether your Vercel API keys can create orders and accept live payments.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleTestApiKeys}
+                    disabled={testingApiKeys}
+                    style={{
+                      background: testingApiKeys ? "#334155" : "linear-gradient(135deg, #0284c7 0%, #2563eb 100%)",
+                      color: "#ffffff",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "8px 16px",
+                      cursor: testingApiKeys ? "not-allowed" : "pointer",
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {testingApiKeys ? "Verifying with Razorpay..." : "Test Razorpay Keys"}
+                  </button>
+                </div>
+
+                {apiKeysTestResult && (
+                  <div style={{
+                    fontSize: 12,
+                    padding: "12px 14px",
+                    borderRadius: 8,
+                    background: apiKeysTestResult.success ? "rgba(16, 185, 129, 0.12)" : "rgba(239, 68, 68, 0.12)",
+                    color: apiKeysTestResult.success ? "#34d399" : "#fca5a5",
+                    border: `1px solid ${apiKeysTestResult.success ? "#10b981" : "#ef4444"}`,
+                    marginTop: 10,
+                  }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                      {apiKeysTestResult.success ? "✓ " : "✕ "}
+                      {apiKeysTestResult.message}
+                    </div>
+                    {apiKeysTestResult.recommendation && (
+                      <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.5, marginTop: 4 }}>
+                        <strong>Action Needed:</strong> {apiKeysTestResult.recommendation}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div style={{ marginBottom: 14 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>
                   Webhook Endpoint URL
@@ -2158,6 +2251,22 @@ export function HubDashboard({
                   onChange={(e) => setEditFormData({ ...editFormData, validUntil: e.target.value })}
                   style={{ width: "100%", background: "#080c14", border: "1px solid #1e293b", borderRadius: 8, padding: "8px 10px", color: "#f8fafc", fontSize: 13, boxSizing: "border-box" }}
                 />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#cbd5e1", marginBottom: 4 }}>
+                  Razorpay Direct Payment Link (Optional Fallback)
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://rzp.io/l/... or https://pages.razorpay.com/..."
+                  value={editFormData.razorpayPaymentLink || ""}
+                  onChange={(e) => setEditFormData({ ...editFormData, razorpayPaymentLink: e.target.value })}
+                  style={{ width: "100%", background: "#080c14", border: "1px solid #1e293b", borderRadius: 8, padding: "8px 10px", color: "#f8fafc", fontSize: 13, boxSizing: "border-box" }}
+                />
+                <span style={{ fontSize: 11, color: "#64748b", marginTop: 2, display: "block" }}>
+                  Clients can pay directly via this link if API order creation encounters credential errors.
+                </span>
               </div>
 
               <div style={{ borderTop: "1px solid #1e293b", paddingTop: 14 }}>

@@ -73,6 +73,7 @@ export async function PATCH(
       lockScope,
       features,
       suspensionReason,
+      razorpayPaymentLink,
     } = body;
 
     const updatedFeatures = features ? { ...(tenant.features as any || {}), ...features } : tenant.features;
@@ -91,6 +92,7 @@ export async function PATCH(
         ...(status && { status }),
         ...(lockScope && { lockScope }),
         ...(suspensionReason !== undefined && { suspensionReason }),
+        ...(razorpayPaymentLink !== undefined && { razorpayPaymentLink: razorpayPaymentLink ? String(razorpayPaymentLink).trim() : null }),
         features: updatedFeatures,
       },
     });

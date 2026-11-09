@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getRazorpayClient } from "@/lib/razorpay";
+import { getRazorpayClient, cleanRazorpayCredential } from "@/lib/razorpay";
 import { verifyBillingSessionToken } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
@@ -45,9 +45,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Validate Razorpay credentials
-    const key_id = process.env.RAZORPAY_KEY_ID?.trim();
-    const key_secret = process.env.RAZORPAY_KEY_SECRET?.trim();
+    // 2. Validate Razorpay credentials (with automatic sanitization of quotes / formatting)
+    const key_id = cleanRazorpayCredential(process.env.RAZORPAY_KEY_ID);
+    const key_secret = cleanRazorpayCredential(process.env.RAZORPAY_KEY_SECRET);
 
     if (!key_id || !key_secret || key_id.includes("your_") || key_secret.includes("your_")) {
       return NextResponse.json(
@@ -111,10 +111,17 @@ export async function POST(req: NextRequest) {
 
     console.error("[Billing Order API Error]:", rzpDesc, err);
 
+    let diagnosticMessage = `Razorpay Error: ${rzpDesc}`;
+    if (String(rzpDesc).toLowerCase().includes("authentication failed")) {
+      diagnosticMessage =
+        "Razorpay Error: Authentication failed. The API Key ID and Secret in Vercel environment variables for SaaS Hub (app.smsinfotek.in) do not match or are expired in your Razorpay Dashboard. Check /api/billing/diagnostic for details.";
+    }
+
     return NextResponse.json(
       {
         success: false,
-        error: `Razorpay Error: ${rzpDesc}`,
+        error: diagnosticMessage,
+        rawError: rzpDesc,
         paymentLink: tenant?.razorpayPaymentLink || null,
       },
       { status: 500 }
