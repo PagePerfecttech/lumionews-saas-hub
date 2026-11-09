@@ -1,40 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getRazorpayClient } from "@/lib/razorpay";
+import { verifyBillingSessionToken } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  let tenant: any = null;
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const sessionToken = body.sessionToken?.trim();
     const licenseKey = body.licenseKey?.trim();
+    const domain = body.domain?.trim();
 
-    if (!licenseKey) {
-      return NextResponse.json(
-        { success: false, error: "License key is required to create a payment order" },
-        { status: 400 }
-      );
+    // 1. Resolve tenant via secure sessionToken, licenseKey, or domain
+    if (sessionToken) {
+      const decoded = verifyBillingSessionToken(sessionToken);
+      if (decoded?.tenantId) {
+        tenant = await prisma.tenant.findUnique({ where: { id: decoded.tenantId } });
+      }
     }
 
-    const tenant = await prisma.tenant.findUnique({
-      where: { licenseKey },
-    });
+    if (!tenant && licenseKey) {
+      tenant = await prisma.tenant.findUnique({ where: { licenseKey } });
+    }
+
+    if (!tenant && domain) {
+      const cleanDomain = domain.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+      tenant = await prisma.tenant.findFirst({
+        where: {
+          OR: [
+            { domain: cleanDomain },
+            { domain: { contains: cleanDomain, mode: "insensitive" } },
+            { siteUrl: { contains: cleanDomain, mode: "insensitive" } },
+          ],
+        },
+      });
+    }
 
     if (!tenant) {
       return NextResponse.json(
-        { success: false, error: "Tenant not found for the specified license key" },
+        { success: false, error: "Tenant not found or session has expired. Please reload from your CMS." },
         { status: 404 }
       );
     }
 
+    // 2. Validate Razorpay credentials
     const key_id = process.env.RAZORPAY_KEY_ID?.trim();
     const key_secret = process.env.RAZORPAY_KEY_SECRET?.trim();
 
-    if (!key_id || !key_secret) {
+    if (!key_id || !key_secret || key_id.includes("your_") || key_secret.includes("your_")) {
       return NextResponse.json(
         {
           success: false,
-          error: "Razorpay credentials (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET) are not configured in environment variables.",
+          error: "Razorpay credentials (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET) are not configured in Vercel environment variables for SaaS Hub (app.smsinfotek.in). Please add active keys in Vercel.",
+          paymentLink: tenant.razorpayPaymentLink || null,
         },
         { status: 500 }
       );
@@ -43,26 +63,31 @@ export async function POST(req: NextRequest) {
     const razorpay = getRazorpayClient();
     if (!razorpay) {
       return NextResponse.json(
-        { success: false, error: "Failed to initialize Razorpay payment gateway." },
+        {
+          success: false,
+          error: "Failed to initialize Razorpay payment client. Please check API credentials.",
+          paymentLink: tenant.razorpayPaymentLink || null,
+        },
         { status: 500 }
       );
     }
 
-    const amount = Number(tenant.amount) || 49900;
-    const currency = tenant.currency || "INR";
-    const receipt = `rcpt_${tenant.id.slice(0, 8)}_${Date.now()}`;
+    // 3. Construct clean order parameters complying with Razorpay constraints
+    const amount = Math.max(Math.round(Number(tenant.amount) || 49900), 100);
+    const currency = (tenant.currency || "INR").toUpperCase();
+    const receipt = `rcpt_${tenant.id.slice(-6)}_${Date.now()}`.slice(0, 40);
+
+    const notes: Record<string, string> = {
+      tenantId: String(tenant.id).slice(0, 40),
+      domain: String(tenant.domain).slice(0, 100),
+      planName: String(tenant.planName || "Subscription").slice(0, 100),
+    };
 
     const order = await razorpay.orders.create({
       amount,
       currency,
       receipt,
-      notes: {
-        tenantId: tenant.id,
-        licenseKey: tenant.licenseKey,
-        tenantName: tenant.name,
-        domain: tenant.domain,
-        planName: tenant.planName,
-      },
+      notes,
     });
 
     return NextResponse.json({
@@ -74,11 +99,24 @@ export async function POST(req: NextRequest) {
       tenantName: tenant.name,
       ownerEmail: tenant.ownerEmail || "",
       ownerPhone: tenant.ownerPhone || "",
+      paymentLink: tenant.razorpayPaymentLink || null,
     });
   } catch (err: any) {
-    console.error("[Billing Order API Error]:", err);
+    const rzpErr = err?.error || err;
+    const rzpDesc =
+      rzpErr?.description ||
+      rzpErr?.message ||
+      err?.message ||
+      (typeof err === "string" ? err : "Failed to create Razorpay order");
+
+    console.error("[Billing Order API Error]:", rzpDesc, err);
+
     return NextResponse.json(
-      { success: false, error: err?.message || "Failed to create Razorpay order" },
+      {
+        success: false,
+        error: `Razorpay Error: ${rzpDesc}`,
+        paymentLink: tenant?.razorpayPaymentLink || null,
+      },
       { status: 500 }
     );
   }

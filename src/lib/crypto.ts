@@ -68,3 +68,41 @@ export function createMasterSsoToken(clientSecret: string, email = "superadmin@l
   return `${payloadB64}.${signature}`;
 }
 
+/**
+ * Creates a secure, opaque billing session token so that raw license keys
+ * are NEVER exposed in browser URLs, history, or access logs.
+ */
+export function createBillingSessionToken(tenantId: string, licenseKey: string): string {
+  const secret = process.env.AUTH_SECRET || "lumio-billing-session-secret-2026";
+  const payload = {
+    t: tenantId,
+    k: licenseKey,
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days valid
+  };
+  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", secret).update(data).digest("hex");
+  return `${data}.${sig}`;
+}
+
+/**
+ * Verifies and decodes a secure billing session token.
+ */
+export function verifyBillingSessionToken(token: string): { tenantId: string; licenseKey: string } | null {
+  try {
+    const [data, sig] = token.split(".");
+    if (!data || !sig) return null;
+    const secret = process.env.AUTH_SECRET || "lumio-billing-session-secret-2026";
+    const expectedSig = crypto.createHmac("sha256", secret).update(data).digest("hex");
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) {
+      return null;
+    }
+    const payload = JSON.parse(Buffer.from(data, "base64url").toString("utf-8"));
+    if (!payload.exp || Date.now() > payload.exp) {
+      return null; // Expired
+    }
+    return { tenantId: payload.t, licenseKey: payload.k };
+  } catch {
+    return null;
+  }
+}
+

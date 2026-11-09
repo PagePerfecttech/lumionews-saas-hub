@@ -31,11 +31,15 @@ interface TenantData {
 
 export function BillingCheckoutClient({
   tenant,
+  sessionToken,
+  maskedKey,
   razorpayKeyId,
-  paymentLink,
+  paymentLink: initialPaymentLink,
   successNotice = false,
 }: {
   tenant: TenantData;
+  sessionToken?: string;
+  maskedKey?: string;
   razorpayKeyId: string;
   paymentLink: string | null;
   successNotice?: boolean;
@@ -47,7 +51,36 @@ export function BillingCheckoutClient({
   const [error, setError] = useState<string | null>(null);
   const [validUntilState, setValidUntilState] = useState<string | null>(tenant.validUntil);
   const [statusState, setStatusState] = useState<string>(tenant.status);
-  const [sdkReady, setSdkReady] = useState(false);
+  const [fallbackPaymentLink, setFallbackPaymentLink] = useState<string | null>(
+    initialPaymentLink || tenant.razorpayPaymentLink || null
+  );
+  const [, setSdkReady] = useState(false);
+
+  // Security: Cleanse raw licenseKey query param from browser URL bar immediately
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        let urlChanged = false;
+
+        if (url.searchParams.has("licenseKey")) {
+          url.searchParams.delete("licenseKey");
+          urlChanged = true;
+        }
+
+        if (sessionToken && !url.searchParams.has("session") && !url.searchParams.has("token")) {
+          url.searchParams.set("session", sessionToken);
+          urlChanged = true;
+        }
+
+        if (urlChanged) {
+          window.history.replaceState({}, "", url.toString());
+        }
+      } catch (err) {
+        console.error("Failed to cleanse URL history:", err);
+      }
+    }
+  }, [sessionToken]);
 
   useEffect(() => {
     if (typeof window !== "undefined" && (window as any).Razorpay) {
@@ -59,6 +92,12 @@ export function BillingCheckoutClient({
     minimumFractionDigits: 2,
   })}`;
 
+  const displayMaskedKey =
+    maskedKey ||
+    (tenant.licenseKey
+      ? `${tenant.licenseKey.slice(0, 6)}••••••••${tenant.licenseKey.slice(-4)}`
+      : "—");
+
   const currentValidDate = validUntilState
     ? new Date(validUntilState).toLocaleDateString("en-IN", {
         year: "numeric",
@@ -68,9 +107,10 @@ export function BillingCheckoutClient({
     : "Not Set / Expired";
 
   const nextValidDate = (() => {
-    const base = validUntilState && new Date(validUntilState) > new Date()
-      ? new Date(validUntilState)
-      : new Date();
+    const base =
+      validUntilState && new Date(validUntilState) > new Date()
+        ? new Date(validUntilState)
+        : new Date();
     const next = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
     return next.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
   })();
@@ -105,7 +145,9 @@ export function BillingCheckoutClient({
       // 1. Ensure Razorpay SDK is loaded
       const isLoaded = await loadRazorpayScript();
       if (!isLoaded || !(window as any).Razorpay) {
-        throw new Error("Unable to load Razorpay payment gateway. Please check your internet connection or ad-blocker.");
+        throw new Error(
+          "Unable to load Razorpay payment gateway script. Please check your internet connection or ad-blocker."
+        );
       }
 
       // 2. Request Server to create a Razorpay Order
@@ -113,13 +155,23 @@ export function BillingCheckoutClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionToken,
           licenseKey: tenant.licenseKey,
+          domain: tenant.domain,
         }),
       });
 
-      const orderData = await orderRes.json();
+      const orderData = await orderRes.json().catch(() => ({}));
+
+      if (orderData.paymentLink) {
+        setFallbackPaymentLink(orderData.paymentLink);
+      }
+
       if (!orderData.success || !orderData.orderId) {
-        throw new Error(orderData.error || "Failed to create payment order with Razorpay.");
+        const errorMsg =
+          orderData.error ||
+          "Failed to create payment order with Razorpay. Please check Razorpay keys in Vercel settings.";
+        throw new Error(errorMsg);
       }
 
       // 3. Open official Razorpay Checkout modal
@@ -136,7 +188,7 @@ export function BillingCheckoutClient({
           contact: orderData.ownerPhone || "",
         },
         notes: {
-          licenseKey: tenant.licenseKey,
+          tenantId: tenant.id,
           domain: tenant.domain,
         },
         theme: {
@@ -154,6 +206,7 @@ export function BillingCheckoutClient({
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
+                sessionToken,
                 licenseKey: tenant.licenseKey,
                 razorpay_order_id: res.razorpay_order_id,
                 razorpay_payment_id: res.razorpay_payment_id,
@@ -161,7 +214,7 @@ export function BillingCheckoutClient({
               }),
             });
 
-            const verifyData = await verifyRes.json();
+            const verifyData = await verifyRes.json().catch(() => ({}));
             if (verifyData.success) {
               setSuccess(true);
               setPaymentId(res.razorpay_payment_id);
@@ -209,7 +262,14 @@ export function BillingCheckoutClient({
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         {/* Success Notification Banner */}
         {success && (
-          <div style={{ background: "rgba(16, 185, 129, 0.12)", border: "1px solid #10b981", borderRadius: 14, padding: "20px 24px" }}>
+          <div
+            style={{
+              background: "rgba(16, 185, 129, 0.12)",
+              border: "1px solid #10b981",
+              borderRadius: 14,
+              padding: "20px 24px",
+            }}
+          >
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <span style={{ fontSize: 22 }}>🎉</span>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#34d399" }}>
@@ -217,78 +277,215 @@ export function BillingCheckoutClient({
               </h3>
             </div>
             <p style={{ margin: "0 0 10px", fontSize: 13, color: "#cbd5e1", lineHeight: 1.5 }}>
-              Your Razorpay payment has been verified. Subscription validity extended by 30 days until <strong>{validUntilState ? new Date(validUntilState).toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" }) : nextValidDate}</strong>.
+              Your Razorpay payment has been verified. Subscription validity extended by 30 days
+              until{" "}
+              <strong>
+                {validUntilState
+                  ? new Date(validUntilState).toLocaleDateString("en-IN", {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : nextValidDate}
+              </strong>
+              .
             </p>
             {paymentId && (
-              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14, fontFamily: "monospace" }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "#94a3b8",
+                  marginBottom: 14,
+                  fontFamily: "monospace",
+                }}
+              >
                 Razorpay Payment ID: <span style={{ color: "#34d399" }}>{paymentId}</span>
               </div>
             )}
             <a
-              href={tenant.siteUrl ? `${tenant.siteUrl.replace(/\/+$/, "")}/admin/subscription` : `https://${tenant.domain}/admin/subscription`}
-              style={{ display: "inline-block", background: "#10b981", color: "#064e3b", fontWeight: 800, fontSize: 13, padding: "10px 18px", borderRadius: 8, textDecoration: "none" }}
+              href={
+                tenant.siteUrl
+                  ? `${tenant.siteUrl.replace(/\/+$/, "")}/admin/subscription`
+                  : `https://${tenant.domain}/admin/subscription`
+              }
+              style={{
+                display: "inline-block",
+                background: "#10b981",
+                color: "#064e3b",
+                fontWeight: 800,
+                fontSize: 13,
+                padding: "10px 18px",
+                borderRadius: 8,
+                textDecoration: "none",
+              }}
             >
               Open {tenant.name} CMS &rarr;
             </a>
           </div>
         )}
 
-        {/* Error Banner */}
+        {/* Error Banner with Direct Fallback Payment Link if available */}
         {error && (
-          <div style={{ background: "rgba(239, 68, 68, 0.12)", border: "1px solid #ef4444", borderRadius: 12, padding: "16px 20px", color: "#fca5a5", fontSize: 13 }}>
-            <strong>Payment Notice:</strong> {error}
+          <div
+            style={{
+              background: "rgba(239, 68, 68, 0.12)",
+              border: "1px solid #ef4444",
+              borderRadius: 12,
+              padding: "18px 20px",
+              color: "#fca5a5",
+              fontSize: 13,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <div>
+              <strong style={{ color: "#f87171" }}>Payment Notice:</strong> {error}
+            </div>
+            {fallbackPaymentLink && (
+              <div style={{ marginTop: 4 }}>
+                <a
+                  href={fallbackPaymentLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)",
+                    color: "#ffffff",
+                    fontWeight: 700,
+                    padding: "10px 18px",
+                    borderRadius: 8,
+                    textDecoration: "none",
+                    fontSize: 13,
+                    boxShadow: "0 4px 12px rgba(220, 38, 38, 0.3)",
+                  }}
+                >
+                  <span>Pay Directly via Razorpay Hosted Link</span>
+                  <span>&rarr;</span>
+                </a>
+              </div>
+            )}
           </div>
         )}
 
         {/* Main Subscription Invoice Card */}
-        <div style={{ background: "#0d1322", border: "1px solid #1e293b", borderRadius: 18, overflow: "hidden", boxShadow: "0 20px 40px -15px rgba(0, 0, 0, 0.7)" }}>
+        <div
+          style={{
+            background: "#0d1322",
+            border: "1px solid #1e293b",
+            borderRadius: 18,
+            overflow: "hidden",
+            boxShadow: "0 20px 40px -15px rgba(0, 0, 0, 0.7)",
+          }}
+        >
           {/* Card Header */}
-          <div style={{ padding: "24px 28px", borderBottom: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 14 }}>
+          <div
+            style={{
+              padding: "24px 28px",
+              borderBottom: "1px solid #1e293b",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 14,
+            }}
+          >
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#f8fafc" }}>
                   {tenant.name}
                 </h1>
-                <span style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  padding: "3px 9px",
-                  borderRadius: 9999,
-                  background: statusState === "ACTIVE" ? "rgba(16, 185, 129, 0.15)" : statusState === "GRACE_PERIOD" ? "rgba(245, 158, 11, 0.15)" : "rgba(239, 68, 68, 0.15)",
-                  color: statusState === "ACTIVE" ? "#34d399" : statusState === "GRACE_PERIOD" ? "#fbbf24" : "#f87171",
-                }}>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: "3px 9px",
+                    borderRadius: 9999,
+                    background:
+                      statusState === "ACTIVE"
+                        ? "rgba(16, 185, 129, 0.15)"
+                        : statusState === "GRACE_PERIOD"
+                        ? "rgba(245, 158, 11, 0.15)"
+                        : "rgba(239, 68, 68, 0.15)",
+                    color:
+                      statusState === "ACTIVE"
+                        ? "#34d399"
+                        : statusState === "GRACE_PERIOD"
+                        ? "#fbbf24"
+                        : "#f87171",
+                  }}
+                >
                   {statusState}
                 </span>
               </div>
-              <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 4 }}>
-                Target Domain: <code style={{ color: "#cbd5e1" }}>{tenant.domain}</code>
+              <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span>Target Domain: <code style={{ color: "#cbd5e1" }}>{tenant.domain}</code></span>
+                <span style={{ color: "#475569" }}>•</span>
+                <span>License: <code style={{ color: "#38bdf8", letterSpacing: "0.05em" }}>{displayMaskedKey}</code></span>
               </div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Due Today</div>
-              <div style={{ fontSize: 26, fontWeight: 900, color: "#f8fafc" }}>{formattedAmount}</div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "#64748b",
+                  textTransform: "uppercase",
+                  fontWeight: 700,
+                }}
+              >
+                Due Today
+              </div>
+              <div style={{ fontSize: 26, fontWeight: 900, color: "#f8fafc" }}>
+                {formattedAmount}
+              </div>
             </div>
           </div>
 
           {/* Plan Breakdown */}
           <div style={{ padding: "24px 28px" }}>
-            <div style={{ background: "#060911", border: "1px solid #1e293b", borderRadius: 12, padding: "18px 20px", marginBottom: 24 }}>
+            <div
+              style={{
+                background: "#060911",
+                border: "1px solid #1e293b",
+                borderRadius: 12,
+                padding: "18px 20px",
+                marginBottom: 24,
+              }}
+            >
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                 <span style={{ color: "#cbd5e1", fontWeight: 600, fontSize: 14 }}>Package Plan</span>
-                <span style={{ color: "#f8fafc", fontWeight: 700, fontSize: 14 }}>{tenant.planName}</span>
+                <span style={{ color: "#f8fafc", fontWeight: 700, fontSize: 14 }}>
+                  {tenant.planName}
+                </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                 <span style={{ color: "#94a3b8", fontSize: 13 }}>Current Valid Until</span>
-                <span style={{ color: "#cbd5e1", fontSize: 13, fontFamily: "monospace" }}>{currentValidDate}</span>
+                <span style={{ color: "#cbd5e1", fontSize: 13, fontFamily: "monospace" }}>
+                  {currentValidDate}
+                </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                 <span style={{ color: "#94a3b8", fontSize: 13 }}>Extension Term</span>
-                <span style={{ color: "#10b981", fontSize: 13, fontWeight: 600 }}>+ 30 Days (until {nextValidDate})</span>
+                <span style={{ color: "#10b981", fontSize: 13, fontWeight: 600 }}>
+                  + 30 Days (until {nextValidDate})
+                </span>
               </div>
               <div style={{ borderTop: "1px solid #1e293b", margin: "12px 0 10px" }} />
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ color: "#f8fafc", fontWeight: 700, fontSize: 15 }}>Total Payable (incl. all taxes)</span>
-                <span style={{ color: "#f8fafc", fontWeight: 900, fontSize: 20 }}>{formattedAmount}</span>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span style={{ color: "#f8fafc", fontWeight: 700, fontSize: 15 }}>
+                  Total Payable (incl. all taxes)
+                </span>
+                <span style={{ color: "#f8fafc", fontWeight: 900, fontSize: 20 }}>
+                  {formattedAmount}
+                </span>
               </div>
             </div>
 
@@ -303,7 +500,10 @@ export function BillingCheckoutClient({
                   alignItems: "center",
                   justifyContent: "center",
                   gap: 12,
-                  background: loading || verifying ? "#334155" : "linear-gradient(135deg, #0284c7 0%, #2563eb 100%)",
+                  background:
+                    loading || verifying
+                      ? "#334155"
+                      : "linear-gradient(135deg, #0284c7 0%, #2563eb 100%)",
                   color: "#ffffff",
                   fontSize: 15,
                   fontWeight: 800,
@@ -325,11 +525,11 @@ export function BillingCheckoutClient({
               </button>
 
               {/* Secondary Fallback: Razorpay Payment Link if tenant has one */}
-              {paymentLink && (
+              {fallbackPaymentLink && (
                 <div style={{ textAlign: "center" }}>
                   <span style={{ fontSize: 12, color: "#64748b" }}>Or alternatively: </span>
                   <a
-                    href={paymentLink}
+                    href={fallbackPaymentLink}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
@@ -354,14 +554,27 @@ export function BillingCheckoutClient({
 
         {/* Invoice History */}
         {tenant.invoices && tenant.invoices.length > 0 && (
-          <div style={{ background: "#0d1322", border: "1px solid #1e293b", borderRadius: 14, padding: "20px 24px" }}>
+          <div
+            style={{
+              background: "#0d1322",
+              border: "1px solid #1e293b",
+              borderRadius: 14,
+              padding: "20px 24px",
+            }}
+          >
             <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>
               Payment History &amp; Verified Invoices
             </h3>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
-                  <tr style={{ borderBottom: "1px solid #1e293b", color: "#64748b", textAlign: "left" }}>
+                  <tr
+                    style={{
+                      borderBottom: "1px solid #1e293b",
+                      color: "#64748b",
+                      textAlign: "left",
+                    }}
+                  >
                     <th style={{ padding: "8px 12px" }}>Invoice ID</th>
                     <th style={{ padding: "8px 12px" }}>Period</th>
                     <th style={{ padding: "8px 12px" }}>Amount</th>
@@ -373,14 +586,41 @@ export function BillingCheckoutClient({
                 <tbody>
                   {tenant.invoices.map((inv) => (
                     <tr key={inv.id} style={{ borderBottom: "1px solid #060911" }}>
-                      <td style={{ padding: "10px 12px", fontFamily: "monospace", color: "#94a3b8" }}>{inv.id.slice(0, 8)}...</td>
-                      <td style={{ padding: "10px 12px", color: "#cbd5e1" }}>{inv.billingPeriod || "Monthly"}</td>
-                      <td style={{ padding: "10px 12px", fontWeight: 600, color: "#f8fafc" }}>₹{((inv.amount || 49900) / 100).toFixed(2)}</td>
-                      <td style={{ padding: "10px 12px", fontFamily: "monospace", color: "#38bdf8", fontSize: 11 }}>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          fontFamily: "monospace",
+                          color: "#94a3b8",
+                        }}
+                      >
+                        {inv.id.slice(0, 8)}...
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#cbd5e1" }}>
+                        {inv.billingPeriod || "Monthly"}
+                      </td>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          fontWeight: 600,
+                          color: "#f8fafc",
+                        }}
+                      >
+                        ₹{((inv.amount || 49900) / 100).toFixed(2)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "10px 12px",
+                          fontFamily: "monospace",
+                          color: "#38bdf8",
+                          fontSize: 11,
+                        }}
+                      >
                         {inv.razorpayPaymentId || "-"}
                       </td>
                       <td style={{ padding: "10px 12px" }}>
-                        <span style={{ color: "#34d399", fontWeight: 700, fontSize: 11 }}>{inv.status}</span>
+                        <span style={{ color: "#34d399", fontWeight: 700, fontSize: 11 }}>
+                          {inv.status}
+                        </span>
                       </td>
                       <td style={{ padding: "10px 12px", color: "#64748b" }}>
                         {new Date(inv.paidAt || inv.createdAt).toLocaleDateString("en-IN")}

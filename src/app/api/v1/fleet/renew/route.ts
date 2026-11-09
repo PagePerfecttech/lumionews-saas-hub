@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { verifyClientSignature } from "@/lib/crypto";
+import { verifyClientSignature, createBillingSessionToken } from "@/lib/crypto";
 import { createSubscriptionPaymentLink } from "@/lib/razorpay";
 
 export const dynamic = "force-dynamic";
@@ -67,9 +67,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "app.smsinfotek.in";
+    const proto = req.headers.get("x-forwarded-proto") || "https";
+    const hubBase = `${proto}://${host}`;
+
+    // Generate secure opaque session token so licenseKey is NEVER placed in URLs
+    const sessionToken = createBillingSessionToken(tenant.id, tenant.licenseKey);
+    const secureBillingUrl = `${hubBase}/billing?session=${sessionToken}`;
+
     return NextResponse.json({
       success: true,
-      paymentUrl: paymentUrl || null,
+      paymentUrl: paymentUrl || secureBillingUrl,
+      sessionToken,
       planId: tenant.planId,
       planName: tenant.planName,
       amount: tenant.amount,

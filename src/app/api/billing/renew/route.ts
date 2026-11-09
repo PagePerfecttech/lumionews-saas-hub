@@ -2,20 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { verifyRazorpayPaymentSignature } from "@/lib/razorpay";
 import { dispatchRemoteSync } from "@/lib/remote-fleet";
+import { verifyBillingSessionToken } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const licenseKey = body.licenseKey?.trim();
-    const razorpayOrderId = body.razorpay_order_id?.trim();
-    const razorpayPaymentId = body.razorpay_payment_id?.trim();
-    const razorpaySignature = body.razorpay_signature?.trim();
+    let licenseKey = body.licenseKey?.trim();
+    const sessionToken = body.sessionToken?.trim();
+    const razorpayOrderId = body.razorpay_order_id?.trim() || body.orderId?.trim();
+    const razorpayPaymentId = body.razorpay_payment_id?.trim() || body.paymentId?.trim();
+    const razorpaySignature = body.razorpay_signature?.trim() || body.signature?.trim();
+
+    if (!licenseKey && sessionToken) {
+      const decoded = verifyBillingSessionToken(sessionToken);
+      if (decoded?.licenseKey) {
+        licenseKey = decoded.licenseKey;
+      }
+    }
 
     if (!licenseKey) {
       return NextResponse.json(
-        { success: false, error: "License key is required." },
+        { success: false, error: "License key or valid session token is required." },
         { status: 400 }
       );
     }
